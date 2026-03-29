@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_DEFAULT: "3.12"
+
+jobs:
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_DEFAULT }}
+
+      - name: Install dev dependencies
+        run: pip install ".[dev]"
+
+      - name: Ruff check
+        run: ruff check far_ai_brain/ tests/
+
+      - name: Ruff format check
+        run: ruff format --check far_ai_brain/ tests/
+
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_DEFAULT }}
+
+      - name: Install dependencies
+        run: pip install ".[dev]"
+
+      - name: MyPy
+        run: mypy far_ai_brain/ --ignore-missing-imports --no-error-summary || true
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install system deps (OpenCV)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
+
+      - name: Install Python dependencies
+        run: pip install ".[dev]"
+
+      - name: Run tests with coverage
+        run: pytest --cov=far_ai_brain --cov-report=xml --cov-report=term-missing -v
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 30
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_DEFAULT }}
+
+      - name: Install dependencies
+        run: pip install ".[dev]"
+
+      - name: Bandit security scan
+        run: bandit -r far_ai_brain/ -c pyproject.toml -f json -o bandit-report.json || true
+
+      - name: Bandit summary
+        run: bandit -r far_ai_brain/ -c pyproject.toml -ll
+
+      - name: pip-audit (dependency vulnerabilities)
+        run: pip-audit --strict --desc || true
+
+      - name: Upload security report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: bandit-report.json
+          retention-days: 30
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t assetcues-invoice-ai:test .
+
+      - name: Verify image runs
+        run: |
+          docker run --rm assetcues-invoice-ai:test python -c "import far_ai_brain; print('OK')"

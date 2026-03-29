@@ -1,0 +1,104 @@
+stages:
+  - lint
+  - test
+  - security
+  - docker
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  PYTHON_VERSION: "3.12"
+
+default:
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq libgl1-mesa-glx libglib2.0-0 > /dev/null 2>&1
+    - pip install --quiet ".[dev]"
+  cache:
+    key: pip-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .pip-cache/
+
+# ---------------------------------------------------------------------------
+# Lint
+# ---------------------------------------------------------------------------
+
+ruff-check:
+  stage: lint
+  script:
+    - ruff check far_ai_brain/ tests/
+    - ruff format --check far_ai_brain/ tests/
+
+typecheck:
+  stage: lint
+  allow_failure: true
+  script:
+    - mypy far_ai_brain/ --ignore-missing-imports --no-error-summary || true
+
+# ---------------------------------------------------------------------------
+# Test
+# ---------------------------------------------------------------------------
+
+test-3.12:
+  stage: test
+  image: python:3.12-slim
+  script:
+    - pytest --cov=far_ai_brain --cov-report=xml --cov-report=term-missing -v
+  artifacts:
+    when: always
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - coverage.xml
+    expire_in: 30 days
+  coverage: '/(?i)total.*?(\d+(?:\.\d+)?\%)/'
+
+test-3.13:
+  stage: test
+  image: python:3.13-slim
+  script:
+    - pytest -v
+  allow_failure: true
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+
+bandit:
+  stage: security
+  script:
+    - bandit -r far_ai_brain/ -c pyproject.toml -ll
+    - bandit -r far_ai_brain/ -c pyproject.toml -f json -o bandit-report.json || true
+  artifacts:
+    when: always
+    paths:
+      - bandit-report.json
+    expire_in: 30 days
+
+pip-audit:
+  stage: security
+  script:
+    - pip-audit --strict --desc || true
+  allow_failure: true
+
+# ---------------------------------------------------------------------------
+# Docker
+# ---------------------------------------------------------------------------
+
+docker-build:
+  stage: docker
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script: []
+  cache: {}
+  script:
+    - docker build -t assetcues-invoice-ai:test .
+    - docker run --rm assetcues-invoice-ai:test python -c "import far_ai_brain; print('OK')"
+  only:
+    - main
+    - develop
+    - merge_requests

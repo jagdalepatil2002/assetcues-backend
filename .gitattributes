@@ -1,0 +1,44 @@
+# Auto-detect text files and normalise line endings
+* text=auto
+
+# Python
+*.py text diff=python
+*.pyi text diff=python
+
+# Config
+*.toml text
+*.yml text
+*.yaml text
+*.json text
+*.cfg text
+*.ini text
+*.env text
+
+# Documentation
+*.md text diff=markdown
+*.txt text
+*.rst text
+LICENSE text
+
+# Docker
+Dockerfile text
+.dockerignore text
+
+# Shell
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Windows
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary (never diff / never normalise)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar.gz binary
+*.whl binary
