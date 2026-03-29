@@ -85,7 +85,13 @@ class VLMAdapter:
         Raises:
             ExtractionError: If VLM returns invalid JSON after retry.
         """
-        return await self._extract_with_retry(images, system_prompt, user_prompt, json_schema, thinking_level)
+        try:
+            return await asyncio.wait_for(
+                self._extract_with_retry(images, system_prompt, user_prompt, json_schema, thinking_level),
+                timeout=180.0,
+            )
+        except asyncio.TimeoutError:
+            raise ExtractionError("VLM extraction timed out after 180 seconds")
 
     async def simple_query(self, prompt: str, image: Optional[bytes] = None) -> str:
         """Send a simple text prompt (optionally with one image), get text back."""
@@ -140,7 +146,7 @@ class VLMAdapter:
     # ── Internal implementation ──
 
     @retry(
-        stop=stop_after_attempt(2),
+        stop=stop_after_attempt(1),
         wait=wait_exponential(multiplier=1, min=1, max=4),
         retry=retry_if_not_exception_type(ExtractionError),
         reraise=True,
@@ -289,7 +295,7 @@ class VLMAdapter:
                 config_kwargs["thinking_config"] = tc
 
         config = genai_types.GenerateContentConfig(**config_kwargs)
-        delays = (2.0, 5.0, 10.0)
+        delays = (2.0,)
         for attempt in range(len(delays) + 1):
             client = self._google_client()
             try:
