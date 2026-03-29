@@ -1,7 +1,7 @@
 """
 LangGraph pipeline wiring — simplified linear graph.
 
-5 nodes: preprocess → classify → extract → verify → collect_training → END
+7 nodes: preprocess → classify → extract → enrich → verify → retry_extract → collect_training → END
 """
 from __future__ import annotations
 
@@ -14,8 +14,10 @@ import structlog
 from langgraph.graph import END, StateGraph
 
 from far_ai_brain.nodes.classify import classify_node
+from far_ai_brain.nodes.enrich import enrich_node
 from far_ai_brain.nodes.extract import extract_node
 from far_ai_brain.nodes.preprocess import preprocess_node
+from far_ai_brain.nodes.retry_extract import retry_extract_node
 from far_ai_brain.nodes.verify import verify_node
 from far_ai_brain.schemas.state import PipelineState
 from far_ai_brain.services.training_collector import collect_training_node
@@ -67,14 +69,18 @@ def build_pipeline() -> StateGraph:
     graph.add_node("preprocess", _log_node("preprocess", preprocess_node))
     graph.add_node("classify", _log_node("classify", classify_node))
     graph.add_node("extract", _log_node("extract", extract_node))
+    graph.add_node("enrich", _log_node("enrich", enrich_node))
     graph.add_node("verify", _log_node("verify", verify_node))
+    graph.add_node("retry_extract", _log_node("retry_extract", retry_extract_node))
     graph.add_node("collect_training", _log_node("collect_training", collect_training_node))
 
     graph.set_entry_point("preprocess")
     graph.add_edge("preprocess", "classify")
     graph.add_edge("classify", "extract")
-    graph.add_edge("extract", "verify")
-    graph.add_edge("verify", "collect_training")
+    graph.add_edge("extract", "enrich")
+    graph.add_edge("enrich", "verify")
+    graph.add_edge("verify", "retry_extract")
+    graph.add_edge("retry_extract", "collect_training")
     graph.add_edge("collect_training", END)
 
     return graph.compile()

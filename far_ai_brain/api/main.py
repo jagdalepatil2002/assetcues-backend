@@ -29,16 +29,20 @@ app = FastAPI(
     description="Agentic AI invoice extraction microservice by Assetcues",
 )
 
-# ── POC CORS — remove this block when shipping production frontend ──
+# ── CORS — origins controlled via ALLOWED_ORIGINS env var ──
+# Dev default: "*". Production: set ALLOWED_ORIGINS=https://your-app.netlify.app
 from starlette.middleware.cors import CORSMiddleware  # noqa: E402
 
+_origins = (
+    ["*"] if settings.allowed_origins.strip() == "*"
+    else [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# ── END POC CORS ──
 
 
 
@@ -58,8 +62,8 @@ async def add_request_id(request: Request, call_next: Any) -> Any:
 # ── Routes ──
 
 
-@app.post("/api/v1/extract", response_model=ExtractionResponse)
-async def extract_invoice() -> ExtractionResponse:
+@app.post("/api/v1/extract")
+async def extract_invoice() -> None:
     """Deprecated JSON endpoint. Use multipart upload instead."""
     raise HTTPException(
         status_code=410,

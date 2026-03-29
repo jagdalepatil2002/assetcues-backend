@@ -1,5 +1,7 @@
 .git
 .github
+.venv/
+venv/
 .gitlab-ci.yml
 .gitattributes
 .gitignore

@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     save_training_data: bool = False
     training_data_dir: str = "./training_data"
 
+    # CORS — comma-separated list of allowed origins.
+    # Set to "*" only for local dev. In production list your exact Netlify / custom domain.
+    # Example: ALLOWED_ORIGINS=https://your-app.netlify.app,https://assetcues.com
+    allowed_origins: str = "*"
+
     # Supported input formats
     supported_formats: frozenset[str] = frozenset(
         {"pdf", "jpeg", "jpg", "png", "tiff", "tif", "heic", "bmp", "webp"}

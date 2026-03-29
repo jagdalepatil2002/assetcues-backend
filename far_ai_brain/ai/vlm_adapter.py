@@ -196,10 +196,29 @@ class VLMAdapter:
     # ── Google Gemini provider (google-genai SDK) ──
 
     @staticmethod
-    def _gemini_thinking_config(thinking_level: Optional[str]) -> Optional[genai_types.ThinkingConfig]:
+    def _gemini_thinking_config(thinking_level: Optional[str], model: str) -> Optional[genai_types.ThinkingConfig]:
+        """Return the right ThinkingConfig for the given model family.
+
+        Gemini 2.5+: thinking_level enum causes 400; use thinking_budget (token count) instead.
+          high  → 8 192 tokens  (thorough reasoning for complex/multi-page invoices)
+          low   → 1 024 tokens  (fast path for simple single-page invoices)
+        Older models (pre-2.5): use ThinkingLevel enum directly.
+        Gemini 2.0: no thinking support — return None.
+        """
         if not thinking_level:
             return None
         tl = thinking_level.strip().lower()
+        m = model.strip().lower()
+
+        if "gemini-2.0" in m:
+            return None  # 2.0 has no thinking support
+
+        if m.startswith("gemini-2.5-"):
+            # Use thinking_budget (int tokens) — the only way 2.5 accepts it
+            budget = 8192 if tl == "high" else 1024
+            return genai_types.ThinkingConfig(thinking_budget=budget)
+
+        # Pre-2.5 models: use the ThinkingLevel enum
         if tl == "high":
             return genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
         if tl == "low":
@@ -207,15 +226,9 @@ class VLMAdapter:
         return None
 
     @staticmethod
-    def _google_model_supports_thinking_level(model: str) -> bool:
-        """Some Gemini IDs reject GenerateContentConfig.thinking_config (400 INVALID_ARGUMENT)."""
-        m = model.strip().lower()
-        if "gemini-2.0" in m:
-            return False
-        # 2.5 family: use thinking_budget in other APIs; thinking_level often 400s on generate_content.
-        if m.startswith("gemini-2.5-"):
-            return False
-        return True
+    def _google_model_supports_thinking(model: str) -> bool:
+        """Returns False only for models that reject thinking_config entirely."""
+        return "gemini-2.0" not in model.strip().lower()
 
     @staticmethod
     def _google_error_is_transient(exc: BaseException) -> bool:
@@ -261,9 +274,10 @@ class VLMAdapter:
         if effective_schema is not None:
             config_kwargs["response_mime_type"] = "application/json"
             config_kwargs["response_json_schema"] = effective_schema
-        tc = self._gemini_thinking_config(thinking_level)
-        if tc is not None and self._google_model_supports_thinking_level(self.model):
-            config_kwargs["thinking_config"] = tc
+        if self._google_model_supports_thinking(self.model):
+            tc = self._gemini_thinking_config(thinking_level, self.model)
+            if tc is not None:
+                config_kwargs["thinking_config"] = tc
 
         config = genai_types.GenerateContentConfig(**config_kwargs)
         delays = (2.0, 5.0, 10.0)
