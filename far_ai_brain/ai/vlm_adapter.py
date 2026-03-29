@@ -96,6 +96,15 @@ class VLMAdapter:
         else:
             return await self._openai_simple_query(prompt, images)
 
+    async def simple_query_stream(self, prompt: str):
+        """Yield text chunks from a streaming response. Async generator."""
+        if self.provider == "google":
+            async for chunk in self._google_simple_query_stream(prompt):
+                yield chunk
+        else:
+            async for chunk in self._openai_simple_query_stream(prompt):
+                yield chunk
+
     async def extract_batch(
         self,
         calls: list[dict[str, Any]],
@@ -411,3 +420,48 @@ class VLMAdapter:
             )
 
         return response.choices[0].message.content or ""
+
+    # ── Streaming implementations ──
+
+    async def _google_simple_query_stream(self, prompt: str):
+        """Yield text chunks from Gemini streaming."""
+        config = genai_types.GenerateContentConfig(system_instruction="")
+        client = self._google_client()
+        try:
+            sem = _get_semaphore()
+            async with sem:
+                async for chunk in await client.aio.models.generate_content_stream(
+                    model=self.model,
+                    contents=[genai_types.Part.from_text(text=prompt)],
+                    config=config,
+                ):
+                    text = getattr(chunk, "text", None)
+                    if text:
+                        yield text
+        finally:
+            await client.aio.aclose()
+
+    async def _openai_simple_query_stream(self, prompt: str):
+        """Yield text chunks from OpenAI streaming."""
+        from openai import AsyncOpenAI
+
+        client_kwargs: dict[str, Any] = {"api_key": self.api_key}
+        if self.provider == "self_hosted" and self.base_url:
+            client_kwargs["base_url"] = self.base_url
+        elif self.provider == "self_hosted":
+            client_kwargs["api_key"] = "not-needed"
+
+        client = AsyncOpenAI(**client_kwargs)
+        sem = _get_semaphore()
+        async with sem:
+            stream = await client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=4096,
+                timeout=settings.api_timeout_seconds,
+                stream=True,
+            )
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content if chunk.choices else None
+                if delta:
+                    yield delta

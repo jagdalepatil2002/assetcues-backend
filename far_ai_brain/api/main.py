@@ -14,7 +14,8 @@ configure_terminal_logging()
 import structlog
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 
-from fastapi.responses import JSONResponse
+import json as _json
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from far_ai_brain.config.models import model_config
 from far_ai_brain.config.settings import settings
@@ -273,34 +274,15 @@ async def agent_chat(request: Request) -> JSONResponse:
         body = await request.json()
         question = body.get("question", "").strip()
         context = body.get("context", "")
+        history = body.get("history", [])
 
         if not question:
             return JSONResponse(status_code=400, content={"error": "Question is required"})
 
         from far_ai_brain.ai.vlm_adapter import VLMAdapter
         adapter = VLMAdapter(role="cheap")
-
-        system_prompt = (
-            "You are AssetCues AI Agent — an intelligent assistant for enterprise asset management. "
-            "You help users understand their asset data, answer questions about invoices, vendors, "
-            "depreciation, compliance, and asset tracking. "
-            "Be concise, precise, and use Indian currency format (₹) when showing amounts. "
-            "If the data doesn't contain enough info to answer, say so honestly. "
-            "Format responses in clean markdown with bullet points where helpful."
-        )
-
-        user_prompt = f"""Based on the following asset management data, answer the user's question.
-
-DATA CONTEXT:
-{context}
-
-USER QUESTION: {question}
-
-Provide a helpful, concise answer:"""
-
-        response = await adapter.simple_query(
-            prompt=f"{system_prompt}\n\n{user_prompt}"
-        )
+        prompt = _build_agent_prompt(question, context, history)
+        response = await adapter.simple_query(prompt=prompt)
 
         logger.info("agent_chat_complete", question=question[:100], response_length=len(response))
         return JSONResponse(content={"answer": response.strip()})
@@ -308,6 +290,76 @@ Provide a helpful, concise answer:"""
     except Exception as e:
         logger.error("agent_chat_failed", error=str(e))
         return JSONResponse(status_code=500, content={"error": "AI Agent is temporarily unavailable"})
+
+
+def _build_agent_prompt(question: str, context: str, history: list) -> str:
+    system = (
+        "You are AssetCues AI Agent — an intelligent assistant for enterprise asset management. "
+        "Help users understand their asset data, answer questions about invoices, vendors, "
+        "depreciation, compliance, and asset tracking. "
+        "Be concise, precise, and use Indian currency format (₹) when showing amounts. "
+        "If the data doesn't contain enough info to answer, say so honestly. "
+        "Format responses in clean markdown with bullet points where helpful."
+    )
+    history_text = ""
+    if history:
+        for turn in history[-10:]:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            history_text += f"\n{role.upper()}: {content}"
+
+    return (
+        f"{system}\n\n"
+        f"DATA CONTEXT:\n{context}\n"
+        f"{('CONVERSATION HISTORY:' + history_text) if history_text else ''}\n\n"
+        f"USER QUESTION: {question}\n\nProvide a helpful, concise answer:"
+    )
+
+
+@app.post("/api/v1/agent/chat/stream")
+async def agent_chat_stream(request: Request) -> StreamingResponse:
+    """AssetCues AI Agent — streaming SSE response."""
+    try:
+        body = await request.json()
+        question = body.get("question", "").strip()
+        context = body.get("context", "")
+        history = body.get("history", [])
+
+        if not question:
+            async def _err():
+                yield f"data: {_json.dumps({'error': 'Question is required'})}\n\n"
+            return StreamingResponse(_err(), media_type="text/event-stream")
+
+        from far_ai_brain.ai.vlm_adapter import VLMAdapter
+        adapter = VLMAdapter(role="cheap")
+        prompt = _build_agent_prompt(question, context, history)
+
+        async def generate():
+            full_response = ""
+            try:
+                async for chunk in adapter.simple_query_stream(prompt=prompt):
+                    if chunk:
+                        full_response += chunk
+                        yield f"data: {_json.dumps({'chunk': chunk})}\n\n"
+                logger.info("agent_stream_complete", question=question[:100], length=len(full_response))
+            except Exception as e:
+                logger.error("agent_stream_failed", error=str(e))
+                yield f"data: {_json.dumps({'error': 'Stream failed'})}\n\n"
+            finally:
+                yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    except Exception as e:
+        logger.error("agent_stream_setup_failed", error=str(e))
+        async def _err():
+            yield f"data: {_json.dumps({'error': 'AI Agent unavailable'})}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(_err(), media_type="text/event-stream")
 
 
 @app.exception_handler(Exception)
