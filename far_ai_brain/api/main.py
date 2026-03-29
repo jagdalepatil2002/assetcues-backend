@@ -260,6 +260,52 @@ async def _run_extraction(
     )
 
 
+# ── AssetCues AI Agent ──
+
+@app.post("/api/v1/agent/chat")
+async def agent_chat(request: Request) -> JSONResponse:
+    """AssetCues AI Agent — answer questions about assets using Gemini."""
+    try:
+        body = await request.json()
+        question = body.get("question", "").strip()
+        context = body.get("context", "")
+
+        if not question:
+            return JSONResponse(status_code=400, content={"error": "Question is required"})
+
+        from far_ai_brain.ai.vlm_adapter import VLMAdapter
+        adapter = VLMAdapter(role="cheap")
+
+        system_prompt = (
+            "You are AssetCues AI Agent — an intelligent assistant for enterprise asset management. "
+            "You help users understand their asset data, answer questions about invoices, vendors, "
+            "depreciation, compliance, and asset tracking. "
+            "Be concise, precise, and use Indian currency format (₹) when showing amounts. "
+            "If the data doesn't contain enough info to answer, say so honestly. "
+            "Format responses in clean markdown with bullet points where helpful."
+        )
+
+        user_prompt = f"""Based on the following asset management data, answer the user's question.
+
+DATA CONTEXT:
+{context}
+
+USER QUESTION: {question}
+
+Provide a helpful, concise answer:"""
+
+        response = await adapter.simple_query(
+            prompt=f"{system_prompt}\n\n{user_prompt}"
+        )
+
+        logger.info("agent_chat_complete", question=question[:100], response_length=len(response))
+        return JSONResponse(content={"answer": response.strip()})
+
+    except Exception as e:
+        logger.error("agent_chat_failed", error=str(e))
+        return JSONResponse(status_code=500, content={"error": "AI Agent is temporarily unavailable"})
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.error("unhandled_exception", error=str(exc), exc_info=True)
