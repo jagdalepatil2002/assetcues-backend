@@ -60,6 +60,15 @@ async def retry_extract_node(state: PipelineState) -> dict:
         logger.info("retry_extract_skip", reason="no crops available")
         return {"extractions": extractions, "retry_count": retry_count}
 
+    MAX_REREAD_CALLS = 3
+    if len(tasks) > MAX_REREAD_CALLS:
+        logger.warning(
+            "retry_extract_capped",
+            total_failing=len(tasks),
+            cap=MAX_REREAD_CALLS,
+        )
+        tasks = tasks[:MAX_REREAD_CALLS]
+
     adapter = VLMAdapter(role="primary")
     # Limit concurrency to avoid overwhelming the VLM API
     sem = asyncio.Semaphore(settings.vlm_concurrency_limit)
