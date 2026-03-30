@@ -10,7 +10,7 @@ CRITICAL RULES:
 
 2. For line items with quantity > 1, create that many individual entries in the assets_to_create array. Each entry gets unit_price as individual_cost. Example: "Laptop x10 = ₹5,00,000" becomes 10 separate entries, each with individual_cost = 50000.
 
-3. If serial numbers are visible on the document, assign them to individual assets in order. Mark serial_number as null for assets without visible serial numbers.
+3. If serial numbers are visible on the document, assign them to individual assets in order. Mark serial_number as null for assets without visible serial numbers. IMPORTANT: If multiple serial numbers appear on one line separated by "/" (e.g. "SN001/SN002/SN003"), treat each "/" as a delimiter and assign exactly one serial number to each individual asset unit in order.
 
 4. If line items are components of a larger system (example: "Server + UPS + Installation"), mark group relationships: the main item has group_action = "none", accessories/services have group_action = "suggest_group_with_parent" with group_parent_temp_id pointing to the main item.
 
@@ -60,7 +60,7 @@ For EACH row, extract:
 - sgst_rate and sgst_amount
 - igst_rate and igst_amount
 - line_total (exact number)
-- serial_numbers_listed (if visible in this row)
+- serial_numbers_listed (if visible in this row) — IMPORTANT: if multiple serials appear on one line separated by "/", split them into individual array elements e.g. ["SN001","SN002","SN003"]. Never put all serials as one string.
 
 CRITICAL: Get every number EXACTLY right. Do not round. Do not estimate. Read each digit carefully, especially handwritten numbers. Indian number format uses commas: 1,00,000 = 100000.
 
@@ -172,7 +172,7 @@ Output requirements (JSON only, no markdown):
 Rules:
 1) Expand each quantity into individual assets in assets_to_create.
 2) Validate math and tax totals. If mismatch, include issue text in validation_results.math_check.issues.
-3) Capture serial numbers and map one serial to one asset wherever possible.
+3) Capture serial numbers and map one serial to one asset wherever possible. If multiple serial numbers appear on one line separated by "/", split them and assign exactly one to each asset unit in order.
 4) Keep number formatting numeric (no currency symbols in numeric fields).
 5) Return only JSON.
 """
@@ -361,7 +361,7 @@ SIMPLE_EXTRACTION_PROMPT = """Read this invoice image carefully and extract ever
 6. MATH CROSS-CHECK: quantity x unit_price should approximately equal taxable_amount. CGST + SGST (or IGST alone) should equal the tax portion. Subtotal + total_tax +/- rounding should equal grand_total. If the printed numbers don't match, trust what is printed — but get every number right.
 7. GST: Indian invoices use either CGST+SGST (intra-state) or IGST (inter-state). Fill whichever is present, leave the other pair as null.
 8. GSTIN is 15 characters (e.g. 27AABCU9603R1ZM). PAN is 10 characters (e.g. AABCU9603R). Copy character-by-character.
-9. SERIAL NUMBERS: If serial/IMEI numbers are listed for line items, capture them in serial_numbers_listed as an array of strings. Otherwise use an empty array [].
+9. SERIAL NUMBERS: If serial/IMEI numbers are listed for line items, capture them in serial_numbers_listed as an array of strings. Otherwise use an empty array []. CRITICAL: If multiple serials appear on one line separated by "/" (e.g. "PW0N9Y00/PW0N9Y01/PW0N9XZX"), split them into separate array elements — never put all serials as a single joined string. The array length must equal the line item quantity.
 10. RETURN ONLY VALID JSON. No markdown fences, no explanation, no extra keys. Just the JSON object below, populated with values from the invoice.
 
 === REQUIRED JSON OUTPUT ===

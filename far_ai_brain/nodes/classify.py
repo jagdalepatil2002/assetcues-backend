@@ -34,7 +34,10 @@ async def classify_node(state: PipelineState) -> dict[str, Any]:
     # For single-page docs we avoid an extra LLM classify call:
     # extraction node can handle full-page extraction directly.
     if page_count == 1:
-        thinking_level = "high" if (is_handwritten or min(quality_scores) < 0.5) else "low"
+        if is_handwritten or min(quality_scores) < 0.5:
+            thinking_level = "high"
+        else:
+            thinking_level = "low"
         page_groups = [
             PageGroup(
                 group_index=0,
@@ -76,27 +79,48 @@ async def classify_node(state: PipelineState) -> dict[str, Any]:
         extraction_plan: dict[str, Any] = classification_response.get(
             "extraction_plan", {}
         )
+        try:
+            estimated_line_items: int = int(
+                classification_response.get("estimated_line_items") or 0
+            )
+        except (TypeError, ValueError):
+            estimated_line_items = 0
 
         logger.info(
             "classify.first_page",
             document_type=document_type,
             complexity=complexity,
+            estimated_line_items=estimated_line_items,
         )
     except Exception:
         logger.warning("classify.classification_failed", fallback=True)
         document_type = _DEFAULT_DOCUMENT_TYPE
         complexity = "complex"
         extraction_plan = {}
+        estimated_line_items = 0
 
     # ------------------------------------------------------------------
     # Step 2 – determine thinking level
+    # high   → complex/handwritten/low-quality docs
+    # medium → simple docs with multiple line items or multi-page (likely
+    #          to have multi-unit quantities with slash-separated serials)
+    # low    → single-page, simple, few line items
     # ------------------------------------------------------------------
     needs_high_thinking = (
         complexity == "complex"
         or is_handwritten
         or min(quality_scores) < 0.5
     )
-    thinking_level: str = "high" if needs_high_thinking else "low"
+    needs_medium_thinking = (
+        not needs_high_thinking
+        and (page_count > 1 or estimated_line_items > 3)
+    )
+    if needs_high_thinking:
+        thinking_level: str = "high"
+    elif needs_medium_thinking:
+        thinking_level = "medium"
+    else:
+        thinking_level = "low"
 
     logger.info("classify.thinking_level", thinking_level=thinking_level)
 

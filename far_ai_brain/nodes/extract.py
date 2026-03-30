@@ -603,7 +603,12 @@ def _expand_assets(extraction: dict[str, Any]) -> list[dict[str, Any]]:
 
         description = _conf_str(item.get("description")) or ""
         serials_raw = item.get("serial_numbers_listed", [])
+        if isinstance(serials_raw, str):
+            serials_raw = [serials_raw]
         serials: list[str] = serials_raw if isinstance(serials_raw, list) else []
+        # Normalize: VLM sometimes returns all serials as one slash-separated string
+        if len(serials) == 1 and "/" in serials[0]:
+            serials = [s.strip() for s in serials[0].split("/") if s.strip()]
         group_action = item.get("group_action", "none")
         group_parent = item.get("group_parent_temp_id")
         group_reason = item.get("group_reason")

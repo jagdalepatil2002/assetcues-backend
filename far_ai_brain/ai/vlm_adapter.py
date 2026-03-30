@@ -230,13 +230,19 @@ class VLMAdapter:
 
         if m.startswith("gemini-2.5-"):
             # Use thinking_budget (int tokens) — the only way 2.5 accepts it
-            budget = 8192 if tl == "high" else 1024
+            # high=8192 (complex/handwritten), medium=4096 (multi-unit/serial invoices), low=1024 (simple)
+            if tl == "high":
+                budget = 8192
+            elif tl == "medium":
+                budget = 4096
+            else:
+                budget = 1024
             return genai_types.ThinkingConfig(thinking_budget=budget)
 
         # Pre-2.5 models: use the ThinkingLevel enum
         if tl == "high":
             return genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
-        if tl == "low":
+        if tl in ("medium", "low"):
             return genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.LOW)
         return None
 

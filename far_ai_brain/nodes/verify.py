@@ -95,6 +95,9 @@ async def verify_node(state: PipelineState) -> dict:
 
         issues = math["issues"] + fmt["issues"]
 
+        # Layer 1b — serial count validation
+        _serial_count_check(extraction, ext_idx, all_review, issues)
+
         # Layer 2 — amount-in-words cross-check
         _amount_words_check(extraction, ext_idx, all_review, issues)
 
@@ -102,6 +105,9 @@ async def verify_node(state: PipelineState) -> dict:
         ext_confidence, ext_failing = _compute_confidence_and_failures(
             extraction, ext_idx, math, fmt,
         )
+        # Serial mismatches lower confidence — reviewer must assign serials manually
+        if any("serial count" in i for i in issues):
+            ext_confidence = min(ext_confidence, 0.75)
         confidence_scores.append(ext_confidence)
         all_failing.extend(ext_failing)
 
@@ -287,6 +293,63 @@ def _format_checks(extraction: dict[str, Any]) -> dict[str, Any]:
         "hsn_valid": hsn_valid,
         "issues": issues,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Layer 1b — serial number count validation
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _serial_count_check(
+    extraction: dict[str, Any],
+    ext_idx: int,
+    review_list: list[dict[str, Any]],
+    issues: list[str],
+) -> None:
+    """Assert that serial count == quantity for every line item that lists serials.
+
+    If a line item has qty=10 but only 1 serial (slash-joined or otherwise),
+    it flags for manual review so the reviewer can split them manually.
+    """
+    for item in extraction.get("line_items", []):
+        qty = int(_num(item.get("quantity", 1)) or 1)
+        serials_raw = item.get("serial_numbers_listed", [])
+        if not serials_raw or not isinstance(serials_raw, list):
+            continue
+
+        # Normalize: flatten any slash-joined entries that slipped through
+        serials: list[str] = []
+        for s in serials_raw:
+            if s and "/" in str(s):
+                serials.extend(p.strip() for p in str(s).split("/") if p.strip())
+            elif s:
+                serials.append(str(s))
+
+        if not serials:
+            continue
+
+        serial_count = len(serials)
+        if serial_count != qty:
+            msg = (
+                f"Line {item.get('line_index')}: qty={qty} but "
+                f"serial_numbers_listed has {serial_count} entries — "
+                f"manual serial assignment required"
+            )
+            issues.append(msg)
+            review_list.append({
+                "extraction_index": ext_idx,
+                "field": "serial_numbers_listed",
+                "line_index": item.get("line_index"),
+                "original_value": serials_raw,
+                "verified_value": None,
+                "reason": f"serial count ({serial_count}) ≠ quantity ({qty})",
+            })
+            logger.warning(
+                "verify.serial_count_mismatch",
+                line_index=item.get("line_index"),
+                qty=qty,
+                serial_count=serial_count,
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════
